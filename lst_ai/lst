@@ -18,9 +18,10 @@ import argparse
 from lst_ai.strip import run_hdbet, apply_mask
 from lst_ai.register import mni_registration, rigid_reg, apply_warp_label, apply_warp_interp
 from lst_ai.segment import unet_segmentation
-from lst_ai.annotate import annotate_lesions
+from lst_ai.annotate import annotate_lesions, annotate_lesions_flair_atlas
 from lst_ai.stats import compute_stats
-from lst_ai.utils import DATA_DIR, download_data, harmonize_affines
+from lst_ai.utils import DATA_DIR, download_data, download_nls_data, harmonize_affines, resolve_nls_model_dir
+from lst_ai.longitudinal import run_longitudinal_segmentation
 
 if __name__ == "__main__":
 
@@ -32,19 +33,41 @@ if __name__ == "__main__":
           "https://doi.org/10.1016/j.nicl.2024.103611.")
     print("###########################\n")
 
-    parser = argparse.ArgumentParser(description='Segment / Label MS lesions according to McDonald criteria.')
+    parser = argparse.ArgumentParser(description='Segment / Label MS lesions (cross-sectional T1+FLAIR or longitudinal FLAIR-only).')
 
-    # Input Images
+    # Input Images (Cross-sectional)
     parser.add_argument('--t1',
                         dest='t1',
-                        help='Path to T1 image',
-                        type=str,
-                        required=True)
+                        default='',
+                        help='Path to T1 image (required for cross-sectional mode)',
+                        type=str)
     parser.add_argument('--flair',
                         dest='flair',
-                        help='Path to FLAIR image',
-                        type=str,
-                        required=True)
+                        default='',
+                        help='Path to FLAIR image (required for cross-sectional mode)',
+                        type=str)
+
+    # Input Images (Longitudinal FLAIR-only new lesion segmentation)
+    parser.add_argument('--flair_baseline',
+                        dest='flair_baseline',
+                        default='',
+                        help='Path to baseline FLAIR image (t0) for longitudinal new lesion segmentation',
+                        type=str)
+    parser.add_argument('--flair_followup',
+                        dest='flair_followup',
+                        default='',
+                        help='Path to follow-up FLAIR image (t1) for longitudinal new lesion segmentation',
+                        type=str)
+    parser.add_argument('--nls_votes',
+                        dest='nls_votes',
+                        default=2,
+                        type=int,
+                        help='Minimum number of folds (out of 5) required to vote positive in longitudinal mode (default: 2)')
+    parser.add_argument('--skip_reg',
+                        action='store_true',
+                        dest='skip_reg',
+                        help='Skip baseline-to-followup rigid registration in longitudinal mode if already co-registered.')
+
     # Output Images
     parser.add_argument('--output',
                         dest='output',
@@ -127,14 +150,25 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
+    longitudinal_mode = bool(args.flair_baseline or args.flair_followup)
+
     print(f"Looking for model weights in {DATA_DIR}.")
     download_data(path=DATA_DIR)
 
-    # Sanity Checks
-    assert os.path.exists(args.t1), 'LST.AI aborted. T1w Image Path does not exist.'
-    assert os.path.exists(args.flair), 'LST.AI aborted. Flair Image Path does not exist.'
-    assert str(args.t1).endswith(".nii.gz"), 'Please provide T1w as a zipped nifti.'
-    assert str(args.flair).endswith(".nii.gz"), 'Please provide FLAIR as a zipped nifti.'
+    if longitudinal_mode:
+        assert args.flair_baseline and args.flair_followup, (
+            'LST.AI longitudinal mode requires both --flair_baseline and --flair_followup.'
+        )
+        assert os.path.exists(args.flair_baseline), 'LST.AI aborted. Baseline FLAIR Image Path does not exist.'
+        assert os.path.exists(args.flair_followup), 'LST.AI aborted. Follow-up FLAIR Image Path does not exist.'
+        assert str(args.flair_baseline).endswith(".nii.gz"), 'Please provide Baseline FLAIR as a zipped nifti (.nii.gz).'
+        assert str(args.flair_followup).endswith(".nii.gz"), 'Please provide Follow-up FLAIR as a zipped nifti (.nii.gz).'
+    else:
+        assert args.t1 and os.path.exists(args.t1), 'LST.AI aborted. T1w Image Path does not exist.'
+        assert args.flair and os.path.exists(args.flair), 'LST.AI aborted. Flair Image Path does not exist.'
+        assert str(args.t1).endswith(".nii.gz"), 'Please provide T1w as a zipped nifti.'
+        assert str(args.flair).endswith(".nii.gz"), 'Please provide FLAIR as a zipped nifti.'
+
     assert not os.path.isfile(args.output), 'Please provide an output path, not a filename.'
     assert len(args.clipping)==2, 'Please provide two values for clipping (min & max).'
 
@@ -149,20 +183,20 @@ if __name__ == "__main__":
         if not os.path.exists(work_dir):
             os.makedirs(work_dir)
 
-    # Harmonize the qform and sform of the inputs before anything reads them.
-    # nibabel (used throughout this pipeline) prefers the sform, while greedy
-    # reads the qform; if a prior co-registration updated only the sform, the two
-    # disagree and the segmentation is mislocated. See CompImg/LST-AI#44. The
-    # originals are left untouched; the pipeline continues on work-dir copies.
-    harmonized_t1 = os.path.join(work_dir, 'input_T1w.nii.gz')
-    harmonized_flair = os.path.join(work_dir, 'input_FLAIR.nii.gz')
-    harmonize_affines(args.t1, harmonized_t1)
-    harmonize_affines(args.flair, harmonized_flair)
-    args.t1 = harmonized_t1
-    args.flair = harmonized_flair
-    # An existing segmentation is read in FLAIR space by the same tools, so it
-    # has to be harmonized the same way or it would disagree with the harmonized
-    # FLAIR exactly as the raw inputs disagreed with each other.
+    if longitudinal_mode:
+        harmonized_b = os.path.join(work_dir, 'input_FLAIR_baseline.nii.gz')
+        harmonized_f = os.path.join(work_dir, 'input_FLAIR_followup.nii.gz')
+        harmonize_affines(args.flair_baseline, harmonized_b)
+        harmonize_affines(args.flair_followup, harmonized_f)
+        args.flair_baseline = harmonized_b
+        args.flair_followup = harmonized_f
+    else:
+        harmonized_t1 = os.path.join(work_dir, 'input_T1w.nii.gz')
+        harmonized_flair = os.path.join(work_dir, 'input_FLAIR.nii.gz')
+        harmonize_affines(args.t1, harmonized_t1)
+        harmonize_affines(args.flair, harmonized_flair)
+        args.t1 = harmonized_t1
+        args.flair = harmonized_flair
     if args.existing_seg and os.path.isfile(args.existing_seg):
         harmonized_seg = os.path.join(work_dir, 'input_existing_seg.nii.gz')
         harmonize_affines(args.existing_seg, harmonized_seg)
@@ -224,9 +258,11 @@ if __name__ == "__main__":
     # atlas files
     t1w_atlas = os.path.join(DATA_DIR, "atlas", "sub-mni152_space-mni_t1.nii.gz")
     t1w_atlas_stripped = os.path.join(DATA_DIR, "atlas", "sub-mni152_space-mni_t1bet.nii.gz")
+    atlas_mask = os.path.join(DATA_DIR, "atlas", "sub-mni152_space-mni_msmask.nii.gz")
 
     # model weights
     model_directory = os.path.join(DATA_DIR, 'model')
+    model_nls_directory = resolve_nls_model_dir()
 
     # make output path (in case it does not exist)
     if not os.path.exists(args.output):
@@ -237,8 +273,81 @@ if __name__ == "__main__":
         print("Aborted.")
         sys.exit(1)
 
+    # Longitudinal FLAIR-only new lesion segmentation
+    if longitudinal_mode:
+        print("Running LST-AI Longitudinal FLAIR New-Lesion Segmentation (5-Fold v6).")
+        model_nls_directory = download_nls_data(model_nls_directory)
+        path_b_in = os.path.join(work_dir, 'sub-X_ses-01_space-orig_FLAIR.nii.gz')
+        path_f_in = os.path.join(work_dir, 'sub-X_ses-02_space-flair_FLAIR.nii.gz')
+        path_b_reg = os.path.join(work_dir, 'sub-X_ses-01_space-flair_FLAIR.nii.gz')
+        path_b_stripped = os.path.join(work_dir, 'sub-X_ses-01_space-flair_desc-stripped_FLAIR.nii.gz')
+        path_f_stripped = os.path.join(work_dir, 'sub-X_ses-02_space-flair_desc-stripped_FLAIR.nii.gz')
+        affine_b_to_f = os.path.join(work_dir, 'affine_baseline_to_followup.mat')
+
+        shutil.copy(args.flair_baseline, path_b_in)
+        shutil.copy(args.flair_followup, path_f_in)
+
+        if args.skip_reg:
+            shutil.copy(path_b_in, path_b_reg)
+        else:
+            rigid_reg(
+                moving=path_b_in,
+                fixed=path_f_in,
+                affine=affine_b_to_f,
+                destination=path_b_reg,
+                n_threads=args.threads,
+            )
+
+        if args.stripped:
+            print("Images have been provided as skull-stripped images. Skipping skull-stripping via HD-BET.")
+            shutil.copy(path_b_reg, path_b_stripped)
+            shutil.copy(path_f_in, path_f_stripped)
+        else:
+            print("Images need to be skull-stripped. Processing follow-up FLAIR with HD-BET.")
+            hdbet_mode = "fast" if args.fast else "accurate"
+            run_hdbet(input_image=path_f_in, output_image=path_f_stripped, device=args.device, mode=hdbet_mode)
+            hdbet_mask = path_f_stripped.replace(".nii.gz", "_bet.nii.gz")
+            shutil.move(hdbet_mask, path_orig_brainmask_flair)
+            apply_mask(input_image=path_b_reg, mask=path_orig_brainmask_flair, output_image=path_b_stripped)
+
+        fold_prob_paths = [
+            os.path.join(work_dir, f'sub-X_ses-Y_space-FLAIR_seg-lst_prob_{i}.nii.gz')
+            for i in range(1, 6)
+        ]
+        run_longitudinal_segmentation(
+            flair_baseline=path_b_stripped,
+            flair_followup=path_f_stripped,
+            model_nls_path=model_nls_directory,
+            output_segmentation_path=path_flair_segmentation,
+            device=args.device,
+            probmap=args.probability_map,
+            output_prob_path=probmap_FLAIR_segmentation,
+            output_fold_prob_paths=fold_prob_paths,
+            nls_votes=args.nls_votes,
+            lesion_thr=int(args.lesion_threshold),
+        )
+        shutil.copy(path_flair_segmentation, os.path.join(args.output, filename_output_segmentation))
+
+        if not args.segment_only and os.path.exists(atlas_mask):
+            atlas_warp = os.path.join(work_dir, "atlas_warp_field.nii.gz")
+            atlas_mask_warped = os.path.join(work_dir, "atlas_mask_warped.nii.gz")
+            annotate_lesions_flair_atlas(
+                atlas_t1=t1w_atlas_stripped,
+                atlas_mask=atlas_mask,
+                flair_native=path_f_stripped,
+                seg_native=path_flair_segmentation,
+                out_atlas_warp=atlas_warp,
+                out_atlas_mask_warped=atlas_mask_warped,
+                out_annotated_native=path_flair_annotated_segmentation,
+                n_threads=args.threads,
+            )
+            shutil.copy(
+                path_flair_annotated_segmentation,
+                os.path.join(args.output, filename_output_annotated_segmentation),
+            )
+
     # Annotation only
-    if args.annotate_only:
+    elif args.annotate_only:
         print("LST-AI assumes existing segmentation to be in FLAIR space.")
         if os.path.isfile(args.existing_seg):
             shutil.copy(args.existing_seg, path_flair_segmentation)

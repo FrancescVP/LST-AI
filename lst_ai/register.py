@@ -1,16 +1,17 @@
 import os
-
-from picsl_greedy import Greedy3D
+import shlex
+import subprocess
 
 
 def _greedy(args):
-    """Run greedy via the picsl_greedy Python API (pip-installable, multi-arch).
-
-    ``Greedy3D().execute`` takes the same greedy command-line argument string as the
-    standalone ``greedy`` binary, so the registration behaviour is unchanged — we
-    just drop the external binary / VTK+ITK compile.
-    """
-    Greedy3D().execute(args)
+    """Run greedy via picsl_greedy Python API if installed, falling back to bundled/system greedy binary."""
+    try:
+        from picsl_greedy import Greedy3D
+        Greedy3D().execute(args)
+    except ImportError:
+        bundled = os.path.join(os.path.dirname(os.path.abspath(__file__)), "binaries", "greedy")
+        binary = bundled if os.path.exists(bundled) else "greedy"
+        subprocess.run(shlex.split(f"{binary} {args}"), check=True)
 
 
 def mni_registration(atlas_t1, path_org_t1, path_org_flair,

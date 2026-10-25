@@ -118,6 +118,7 @@ setup(
         # back to an sdist build (compiling VTK) on arm64.
         'picsl-greedy>=1.4.0.1',
         'brainles_hd_bet',
+        'nnunetv2',
     ] + _fastsurfer.FASTSURFER_REQUIRES,
     extras_require={
         # Only for reading a legacy v1.3.0 .onnx bundle, or re-running the .onnx -> .pt

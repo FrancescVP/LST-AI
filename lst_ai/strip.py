@@ -30,21 +30,32 @@ def run_hdbet(input_image, output_image, device, mode="accurate"):
     device (str): GPU id (e.g. '0') or 'cpu'.
     mode (str, optional): 'accurate' (test-time augmentation on) or 'fast' (TTA off).
     """
-    from brainles_hd_bet import run_hd_bet
-
     assert mode in ["accurate", "fast"], 'Unknown HD-BET mode. Choose "accurate" or "fast".'
 
     on_cpu = "cpu" in str(device).lower()
-    run_hd_bet(
-        mri_fnames=[str(input_image)],
-        output_fnames=[str(output_image)],
-        mode=mode,
-        device="cpu" if on_cpu else int(device),
-        postprocess=False,
-        do_tta=(mode == "accurate") and not on_cpu,   # TTA on CPU is prohibitively slow
-        keep_mask=True,
-        overwrite=True,
-    )
+    try:
+        try:
+            from brainles_hd_bet import run_hd_bet
+        except ImportError:
+            from HD_BET.run import run_hd_bet
+
+        run_hd_bet(
+            mri_fnames=[str(input_image)],
+            output_fnames=[str(output_image)],
+            mode=mode,
+            device="cpu" if on_cpu else int(device),
+            postprocess=False,
+            do_tta=(mode == "accurate") and not on_cpu,   # TTA on CPU is prohibitively slow
+            keep_mask=True,
+            overwrite=True,
+        )
+    except ImportError:
+        import shlex
+        import subprocess
+
+        tta = 0 if (on_cpu or mode == "fast") else 1
+        cmd = f"hd-bet -i {input_image} -o {output_image} -device {device} -mode {mode} -tta {tta} -pp 0 -s 1"
+        subprocess.run(shlex.split(cmd), check=True)
 
     # HD-BET v1 writes the mask as <output>_mask.nii.gz; the pipeline expects
     # <output>_bet.nii.gz (the v2 name). Normalise so callers need not care.

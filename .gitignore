@@ -12,10 +12,12 @@ venv/
 
 # Local model/atlas bundles fetched at runtime (shipped via the release zip)
 lst_ai/model/
+lst_ai/model_nls/
 lst_ai/atlas/
+lst_ai/binaries/
 lst_data.zip
+lst_nls_data.zip
 lst_data/
-lst_data.zip
 __pycache__/
 *.pyc
 .pytest_cache/

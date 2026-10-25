@@ -115,3 +115,50 @@ def download_data(path=DATA_DIR):
         # Remove the ZIP file after extracting its contents.
         os.remove(target_path)
         print("Completed.")
+
+
+NLS_DATA_URL = os.environ.get(
+    "LST_AI_NLS_DATA_URL",
+    "https://huggingface.co/fvivo/m-v6/resolve/main/lst_nls_data.zip",
+)
+
+
+def resolve_nls_model_dir(package_dir=_PACKAGE_DIR, environ=os.environ):
+    """Resolve the 5-fold longitudinal new-lesion model directory (model_nls)."""
+    override = environ.get("LST_AI_NLS_MODEL_DIR")
+    if override:
+        return os.path.abspath(os.path.expanduser(override))
+    data_override = environ.get("LST_AI_DATA_DIR")
+    if data_override:
+        return os.path.join(os.path.abspath(os.path.expanduser(data_override)), "model_nls")
+    pkg_nls = os.path.join(package_dir, "model_nls")
+    if os.path.isdir(pkg_nls) and os.path.isfile(os.path.join(pkg_nls, "plans.json")):
+        return pkg_nls
+    return os.path.join(DATA_DIR, "model_nls")
+
+
+def download_nls_data(model_nls_dir=None, url=None):
+    """Download and unpack the 5-fold longitudinal model bundle (lst_nls_data.zip) if missing."""
+    if model_nls_dir is None:
+        model_nls_dir = resolve_nls_model_dir()
+    if os.path.isfile(os.path.join(model_nls_dir, "plans.json")):
+        return model_nls_dir
+    download_url = url or NLS_DATA_URL
+    if not download_url:
+        raise FileNotFoundError(
+            f"Longitudinal model weights not found at {model_nls_dir}. "
+            "Place the unpacked 'model_nls' folder there, set LST_AI_NLS_MODEL_DIR, "
+            "or set NLS_DATA_URL / LST_AI_NLS_DATA_URL to your GitHub Release zip."
+        )
+    parent_dir = os.path.dirname(model_nls_dir)
+    os.makedirs(parent_dir, exist_ok=True)
+    target_zip = os.path.join(parent_dir, "lst_nls_data.zip")
+    print(f"Downloading longitudinal 5-fold model weights from {download_url} ...")
+    with request.urlopen(download_url) as response, open(target_zip, "wb") as out_file:
+        out_file.write(response.read())
+    with zipfile.ZipFile(target_zip, "r") as zip_ref:
+        zip_ref.extractall(parent_dir)
+    os.remove(target_zip)
+    print("Longitudinal model download completed.")
+    return model_nls_dir
+

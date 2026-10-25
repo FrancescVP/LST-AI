@@ -140,6 +140,18 @@ and removed afterwards.
 2. **Segmentation only** (`--segment_only`): only the binary segmentation mask is saved.
 3. **Annotation only** (`--annotate_only`): annotate an existing binary mask, provided
    in FLAIR space via `--existing_seg /path/to/binary/mask`.
+4. **Longitudinal FLAIR-Only New Lesion Segmentation** (`--flair_baseline` + `--flair_followup`):
+   co-registers baseline ($t_0$) to follow-up ($t_1$) FLAIR, skull-strips via HD-BET (unless `--stripped`),
+   segments new MS lesions using the 5-fold `nnUNetTrainerRobust_500epochs_patience150_v6` ensemble
+   (`5-Fold Hard Vote >=2/5, checkpoint_best_loss.pth`, configurable via `--nls_votes`), annotates
+   McDonald zones, and outputs `space-flair_seg-lst.nii.gz`, `space-flair_desc-annotated_seg-lst.nii.gz`,
+   `lesion_stats.csv`, and `annotated_lesion_stats.csv`:
+
+```bash
+lst --flair_baseline sub-01_ses-01_flair.nii.gz \
+    --flair_followup sub-01_ses-02_flair.nii.gz \
+    --output /mnt/data/lst/results_longitudinal
+```
 
 #### Common settings
 

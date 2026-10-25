@@ -279,6 +279,58 @@ def annotate_lesions(t1w_im, lesion_mask, t1w_seg, lesion_mask_annotated, device
                              lesion_mask_annotated)
 
 
+def annotate_lesions_flair_atlas(
+    atlas_t1,
+    atlas_mask,
+    flair_native,
+    seg_native,
+    out_atlas_warp,
+    out_atlas_mask_warped,
+    out_annotated_native,
+    n_threads=1,
+):
+    """
+    Annotate lesions into McDonald zones (1=PV, 2=JC, 3=SC, 4=IT) using the MNI152
+    msmask atlas when only FLAIR images are available (longitudinal FLAIR-only mode).
+    """
+    from lst_ai.register import _greedy
+
+    aff_mat = out_atlas_warp.replace(".nii.gz", "_aff.mat")
+    _greedy(
+        f"-d 3 -a -dof 12 -m NMI -ia-image-centers -n 100x50x10 "
+        f"-i {flair_native} {atlas_t1} -o {aff_mat} -threads {n_threads}"
+    )
+    _greedy(
+        f"-threads {n_threads} -d 3 -rf {flair_native} -ri LABEL 0.2vox "
+        f"-rm {atlas_mask} {out_atlas_mask_warped} -r {aff_mat}"
+    )
+
+    seg_nib = nib.load(seg_native)
+    seg = seg_nib.get_fdata()
+    seg[seg > 0] = 1
+    msmask = nib.load(out_atlas_mask_warped).get_fdata()
+
+    seg_label = label(seg, connectivity=3)
+    for lesion_ctr in range(1, seg_label.max() + 1):
+        temp_mask = np.zeros(seg.shape)
+        temp_mask[seg_label == lesion_ctr] = 1
+        temp_mask_dil = dilation(temp_mask, footprint=np.ones((3, 3, 3))).astype(np.uint8)
+
+        if 4 in msmask[temp_mask_dil == 1]:
+            seg[temp_mask == 1] = 1  # PV
+        elif 5 in msmask[temp_mask_dil == 1]:
+            seg[temp_mask == 1] = 4  # IT
+        elif 2 in msmask[temp_mask_dil == 1]:
+            seg[temp_mask == 1] = 2  # JC
+        else:
+            seg[temp_mask == 1] = 3  # SC
+
+    nib.save(
+        nib.Nifti1Image(seg.astype(np.uint8), seg_nib.affine, seg_nib.header),
+        out_annotated_native,
+    )
+
+
 if __name__ == "__main__":
 
     # Only for testing purposes
