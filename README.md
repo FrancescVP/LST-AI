@@ -23,25 +23,23 @@ LST-AI was collaboratively developed by the Department of Neurology and Departme
 
 ## Installation
 
-LST-AI installs from PyPI. Inference runs in **PyTorch** — there is no TensorFlow, no ONNX
-Runtime and, since v2.0.0, no `onnx` dependency either: the released weights ship as `.pt`
-checkpoints. `greedy` (registration), HD-BET (skull stripping) and FastSurfer's
-dependencies install as wheels on every supported platform, so nothing is compiled.
+To install this fork (which includes both the cross-sectional T1+FLAIR ensemble and the **5-fold longitudinal FLAIR-only new lesion segmentation** mode):
 
 ```bash
 python3 -m venv lst_env && source lst_env/bin/activate
-pip install lst-ai
+pip install "git+https://github.com/FrancescVP/LST-AI.git"
 ```
 
-While 2.0.0 is in its release-candidate phase, pip needs to be told that a
-pre-release is acceptable: `pip install --pre lst-ai` (or pin it explicitly,
-`pip install lst-ai==2.0.0rc1`). Once the final 2.0.0 is published, the plain command
-above is all there is.
+*(Or clone and install locally:)*
+```bash
+git clone https://github.com/FrancescVP/LST-AI.git && cd LST-AI
+pip install -e .
+```
 
-The model bundle and atlas are downloaded automatically on first run; they land next to
+The model bundles (cross-sectional and 5-fold longitudinal) and the MNI152 atlas are downloaded automatically on first run; they land next to
 the installed `lst_ai` package when that directory is writable (any venv install), and
 fall back to `~/.cache/lst_ai` when it is not. Set `LST_AI_DATA_DIR` to override the
-location. Lesion annotation runs on FastSurfer, which the install brings along — see
+location. Lesion annotation runs on FastSurfer in cross-sectional mode (and MNI152 atlas registration in longitudinal FLAIR-only mode; set `LST_AI_SKIP_FASTSURFER=1` during install if you only need longitudinal FLAIR mode) — see
 [Lesion annotation with FastSurfer](#lesion-annotation-with-fastsurfer). Nothing has to
 be set up by hand.
 
@@ -70,7 +68,7 @@ nothing has to be installed system-wide:
 
 ```bash
 uv venv --python 3.12 lst_env && source lst_env/bin/activate
-uv pip install lst-ai
+uv pip install "git+https://github.com/FrancescVP/LST-AI.git"
 ```
 
 Note the `uv pip install` — a venv created by `uv venv` deliberately ships without
@@ -82,7 +80,7 @@ Note the `uv pip install` — a venv created by `uv venv` deliberately ships wit
 
 ```bash
 python3 -m venv lst_env && source lst_env/bin/activate
-git clone https://github.com/CompImg/LST-AI/ && cd LST-AI
+git clone https://github.com/FrancescVP/LST-AI.git && cd LST-AI
 pip install -e .
 ```
 
